@@ -13,15 +13,6 @@ import "./interfaces/ITradeFactory.sol";
 import "./interfaces/Across/HubPool.sol";
 import "./interfaces/Across/AcceleratingDistributor.sol";
 
-struct Struct {
-    address lpToken;
-    bool isEnabled;
-    uint32 lastLpFeeUpdate;
-    uint256 utilizedReserves;
-    uint256 liquidReserves;
-    uint256 undistributedLpFees;
-}
-
 contract Strategy is BaseStrategy {
     using SafeERC20 for IERC20;
     using Address for address;
@@ -263,10 +254,10 @@ contract Strategy is BaseStrategy {
     }
 
     function _removeLiquidity(uint256 _amountNeeded) internal returns (uint256 _liquidatedAmount, uint256 _loss) {
-        uint256 _wantAvailable = Math.min(availableLiquidity(), _amountNeeded); // @dev checking the available liquidity to withdraw
-        uint256 _lpTokenAmount = _wantAvailable / valueLpToWant() / 1e18;
+        uint256 _wantAvailable = Math.min(availableLiquidity(), _amountNeeded); // @dev checking the available liquidity to withdraw, returns the amount in native asset
+        uint256 _lpTokenAmount = (_wantAvailable * 1e18) / valueLpToWant();
         _unstake(_lpTokenAmount); // @dev this will reset the reward multiplier
-        hubPool.removeLiquidity(address(want), _lpTokenAmount, false); // @dev 3rd arg is optional, to wrap and unwrap ETH (not required)
+        hubPool.removeLiquidity(address(want), _lpTokenAmount, false);
     }
 
     function _stake(uint256 _amountToStake) internal {
@@ -291,6 +282,10 @@ contract Strategy is BaseStrategy {
         }
     }
 
+    function balanceOfEmissionToken() public view returns (uint256) {
+        return emissionToken.balanceOf(address(this));
+    }
+
     function balanceOfWant() public view returns (uint256) {
         return want.balanceOf(address(this));
     }
@@ -311,15 +306,16 @@ contract Strategy is BaseStrategy {
     // https://github.com/across-protocol/contracts-v2/blob/e911cf59ad3469e19f04f5de1c92d6406c336042/contracts/
     function valueLpToWant() public view returns (uint256) {
         address _wantAddress = address(want);
+        HubPool _hubPool = hubPool;
         HubPool.PooledToken memory _struct = hubPool.pooledTokens(_wantAddress);
-        address bondToken = hubPool.bondToken();
-        uint256 getCurrentTime = hubPool.getCurrentTime();
-        uint256 lpFeeRatePerSecond = hubPool.lpFeeRatePerSecond();
+        address bondToken = _hubPool.bondToken();
+        uint256 getCurrentTime = _hubPool.getCurrentTime();
+        uint256 lpFeeRatePerSecond = _hubPool.lpFeeRatePerSecond();
         uint256 lpTokenTotalSupply = IERC20(_struct.lpToken).totalSupply();
-        uint256 bondAmount = hubPool.bondAmount();
-        bool _activeRequest = hubPool.rootBundleProposal().unclaimedPoolRebalanceLeafCount != 0;
+        uint256 bondAmount = _hubPool.bondAmount();
+        bool _activeRequest = _hubPool.rootBundleProposal().unclaimedPoolRebalanceLeafCount != 0;
         
-        if (lpTokenTotalSupply == 0) return 1e18;
+        if (lpTokenTotalSupply == 0) return wantDecimals;
 
         // @note _updateAccumulatedLpFees logic
         uint256 timeFromLastInteraction = getCurrentTime - _struct.lastLpFeeUpdate;
@@ -329,7 +325,7 @@ contract Strategy is BaseStrategy {
         _struct.lastLpFeeUpdate = uint32(getCurrentTime);
         
         // @note _sync logic
-        uint256 balance = IERC20(_wantAddress).balanceOf(address(hubPool));
+        uint256 balance = IERC20(_wantAddress).balanceOf(address(_hubPool));
         uint256 balanceSansBond = _wantAddress == address(bondToken) && _activeRequest ? balance - bondAmount : balance;
         if (balanceSansBond > _struct.liquidReserves) {
             _struct.utilizedReserves -= uint256(balanceSansBond - _struct.liquidReserves);
@@ -340,13 +336,11 @@ contract Strategy is BaseStrategy {
         return (uint256(numerator) * 1e18) / lpTokenTotalSupply;
     }
 
-    // @dev When trying to withdraw more funds than available (i.e l1TokensToReturn > liquidReserves), lpStaker will underflow
-    function availableLiquidity() public view returns (uint256) {
+    function availableLiquidity() public view returns (uint256) { // @dev returns the amount of native asset avail.
         return hubPool.pooledTokens(address(want)).liquidReserves;
     }
 
     function pendingRewards() public view returns (uint256) {
         return lpStaker.getOutstandingRewards(address(lpToken), address(this));
     }
-
 }

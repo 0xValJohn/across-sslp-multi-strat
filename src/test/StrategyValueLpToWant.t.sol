@@ -6,14 +6,13 @@ import {Strategy} from "../Strategy.sol";
 import {IVault} from "../interfaces/Vault.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import "forge-std/console2.sol"; // for test logging only
 
-contract LpRateTest is StrategyFixture {
+contract valueLpToWantTest is StrategyFixture {
     function setUp() public override {
         super.setUp();
     }
 
-    function testLpRate(uint256 _amount) public {
+    function valueLpToWant(uint256 _amount) public {
         vm.assume(_amount > minFuzzAmt && _amount < maxFuzzAmt);
 
         // Logic for multi-want testing
@@ -31,12 +30,7 @@ contract LpRateTest is StrategyFixture {
             if (keccak256(abi.encodePacked(_wantSymbol)) == keccak256(abi.encodePacked("WETH"))) {
                 _amount = _amount / 1_000; // fuzz amount modifier for WETH e.g. 100 WETH --> 0.1 ETH
             }
-        //
-            console2.log(_wantSymbol, strategy.valueLpToWant());
-            
-
+        //         
         }
-    vm.expectRevert(); // used to see the console2.log
     }
-
 }
