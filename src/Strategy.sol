@@ -28,7 +28,7 @@ contract Strategy is BaseStrategy {
     IERC20 public emissionToken;
     uint256 internal wantDecimals;
     string internal strategyName;
-
+    
 // ------------------------ CONSTRUCTOR ------------------------
 
     constructor(address _vault, address _hubPool, address _lpStaker) BaseStrategy(_vault) {
@@ -254,10 +254,10 @@ contract Strategy is BaseStrategy {
     }
 
     function _removeLiquidity(uint256 _amountNeeded) internal returns (uint256 _liquidatedAmount, uint256 _loss) {
-        uint256 _wantAvailable = Math.min(availableLiquidity(), _amountNeeded); // @dev checking the available liquidity to withdraw
-        uint256 _lpTokenAmount = _wantAvailable / valueLpToWant() / 1e18;
+        uint256 _wantAvailable = Math.min(availableLiquidity(), _amountNeeded); // @dev checking the available liquidity to withdraw, returns the amount in native asset
+        uint256 _lpTokenAmount = (_wantAvailable * 1e18) / valueLpToWant();
         _unstake(_lpTokenAmount); // @dev this will reset the reward multiplier
-        hubPool.removeLiquidity(address(want), _lpTokenAmount, false); // @dev 3rd arg is optional, to wrap and unwrap ETH (not required)
+        hubPool.removeLiquidity(address(want), _lpTokenAmount, false);
     }
 
     function _stake(uint256 _amountToStake) internal {
@@ -282,6 +282,10 @@ contract Strategy is BaseStrategy {
         }
     }
 
+    function balanceOfEmissionToken() public view returns (uint256) {
+        return emissionToken.balanceOf(address(this));
+    }
+
     function balanceOfWant() public view returns (uint256) {
         return want.balanceOf(address(this));
     }
@@ -298,23 +302,45 @@ contract Strategy is BaseStrategy {
         return balanceOfUnstakedLPToken() + balanceOfStakedLPToken();
     }
 
-    // @dev Will slightly underestimate rate when l1Token balance > liquidReserves
-    // Hubpool.sync (internal) can't be called to account for recently concluded L2 -> L1 transfer and associated accounting
-    function valueLpToWant() public view returns (uint256) { 
-        uint256 _utilizedReserves = hubPool.pooledTokens(address(want)).utilizedReserves; // @note gas-opti: could probably make one hubPool.pooledTokens call
-        uint256 _liquidReserves = hubPool.pooledTokens(address(want)).liquidReserves;
-        uint256 _undistributedLpFees = hubPool.pooledTokens(address(want)).undistributedLpFees;
-        uint256 _lpTokenSupply = lpToken.totalSupply();
-        return (_liquidReserves + _utilizedReserves -_undistributedLpFees) * 1e18 / _lpTokenSupply ; // @dev returns rate with 18 decimals
+    // @dev _exchangeRateCurrent (HubPool.sol#L928) logic replicated, as there are no view function for the rate
+    // https://github.com/across-protocol/contracts-v2/blob/e911cf59ad3469e19f04f5de1c92d6406c336042/contracts/
+    function valueLpToWant() public view returns (uint256) {
+        address _wantAddress = address(want);
+        HubPool _hubPool = hubPool;
+        HubPool.PooledToken memory _struct = hubPool.pooledTokens(_wantAddress);
+        address bondToken = _hubPool.bondToken();
+        uint256 getCurrentTime = _hubPool.getCurrentTime();
+        uint256 lpFeeRatePerSecond = _hubPool.lpFeeRatePerSecond();
+        uint256 lpTokenTotalSupply = IERC20(_struct.lpToken).totalSupply();
+        uint256 bondAmount = _hubPool.bondAmount();
+        bool _activeRequest = _hubPool.rootBundleProposal().unclaimedPoolRebalanceLeafCount != 0;
+        
+        if (lpTokenTotalSupply == 0) return wantDecimals;
+
+        // @note _updateAccumulatedLpFees logic
+        uint256 timeFromLastInteraction = getCurrentTime - _struct.lastLpFeeUpdate;
+        uint256 maxUndistributedLpFees = (_struct.undistributedLpFees * lpFeeRatePerSecond * timeFromLastInteraction) / (1e18);
+        uint256 accumulatedFees = maxUndistributedLpFees < _struct.undistributedLpFees ? maxUndistributedLpFees : _struct.undistributedLpFees;
+        _struct.undistributedLpFees -= accumulatedFees;
+        _struct.lastLpFeeUpdate = uint32(getCurrentTime);
+        
+        // @note _sync logic
+        uint256 balance = IERC20(_wantAddress).balanceOf(address(_hubPool));
+        uint256 balanceSansBond = _wantAddress == address(bondToken) && _activeRequest ? balance - bondAmount : balance;
+        if (balanceSansBond > _struct.liquidReserves) {
+            _struct.utilizedReserves -= uint256(balanceSansBond - _struct.liquidReserves);
+            _struct.liquidReserves = balanceSansBond;
+        }
+
+        uint256 numerator = uint256(_struct.liquidReserves) + _struct.utilizedReserves - uint256(_struct.undistributedLpFees);
+        return (uint256(numerator) * 1e18) / lpTokenTotalSupply;
     }
 
-    // @dev When trying to withdraw more funds than available (i.e l1TokensToReturn > liquidReserves), lpStaker will underflow
-    function availableLiquidity() public view returns (uint256) {
+    function availableLiquidity() public view returns (uint256) { // @dev returns the amount of native asset avail.
         return hubPool.pooledTokens(address(want)).liquidReserves;
     }
 
     function pendingRewards() public view returns (uint256) {
         return lpStaker.getOutstandingRewards(address(lpToken), address(this));
     }
-
 }

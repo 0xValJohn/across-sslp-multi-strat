@@ -8,7 +8,7 @@ update:; forge update
 # Build & test
 # change ETH_RPC_URL to another one (e.g., FTM_RPC_URL) for different chains
 FORK_URL := ${ETH_RPC_URL} 
-TEST_SINGLE := testStrategyClone
+TEST_SINGLE := testProfitableHarvest
 
 # For deployments. Add all args without a comma
 # ex: 0x316..FB5 "Name" 10

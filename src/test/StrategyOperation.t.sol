@@ -140,7 +140,7 @@ contract StrategyOperationsTest is StrategyFixture {
             skip(1);
             vm.prank(strategist);
             strategy.harvest();
-            assertLt(strategy.estimatedTotalAssets(), _amount);
+            assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, DELTA);
         }
     }
 
@@ -171,6 +171,7 @@ contract StrategyOperationsTest is StrategyFixture {
             want.approve(address(vault), _amount);
             vm.prank(user);
             vault.deposit(_amount);
+            console2.log("Test 1 for", _wantSymbol);
             assertRelApproxEq(want.balanceOf(address(vault)), _amount, DELTA);
 
             uint256 beforePps = vault.pricePerShare();
@@ -179,18 +180,33 @@ contract StrategyOperationsTest is StrategyFixture {
             skip(1);
             vm.prank(strategist);
             strategy.harvest();
+            skip(1);
+            console2.log("Test 2 for", _wantSymbol);
             assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, DELTA);
 
-            // TODO: Add some code before harvest #2 to simulate earning yield
-
-            // Harvest 2: Realize profit
+            // Harvest 2: Realize profit & claim rewards
             skip(1);
             vm.prank(strategist);
             strategy.harvest();
+
+            // @dev simulate selling ACX rewards
+            skip(30 days);
+            uint256 _decimalDifference = 18 - _wantDecimals;
+            uint256 _simulatedSoldRewards = (strategy.balanceOfEmissionToken() / (10 ** _decimalDifference)) / 25; // @note estimated ACX price 0.04$
+            deal(address(want), address(strategy), _simulatedSoldRewards);
+
+            // Harvest 3: Realize profit
+            skip(1);
+            vm.prank(strategist);
+            strategy.harvest();
+
+
             skip(6 hours);
 
             uint256 profit = want.balanceOf(address(vault));
+            console2.log("Test 3 for", _wantSymbol);
             assertGt(want.balanceOf(address(strategy)) + profit, _amount);
+            console2.log("Test 4 for", _wantSymbol);
             assertGt(vault.pricePerShare(), beforePps);
         }
     }
@@ -284,6 +300,13 @@ contract StrategyOperationsTest is StrategyFixture {
             assertRelApproxEq(strategy.estimatedTotalAssets(), _amount, DELTA);
 
             // TODO: Add some code before harvest #2 to simulate earning yield
+            console2.log(strategy.balanceOfEmissionToken());
+
+
+
+
+
+
 
             vm.prank(gov);
             vault.updateStrategyDebtRatio(address(strategy), 5_000);
