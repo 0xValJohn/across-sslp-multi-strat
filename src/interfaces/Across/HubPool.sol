@@ -23,4 +23,8 @@ interface HubPool {
     function removeLiquidity(address l1Token, uint256 lpTokenAmount, bool sendEth) external;
     function pooledTokens(address l1Token) external view returns (PooledToken memory);
     function rootBundleProposal() external view returns (RootBundleProposal memory);
+    function bondAmount() external view returns (uint256);
+    function bondToken() external view returns (address);
+    function getCurrentTime() external view returns (uint256);
+    function lpFeeRatePerSecond() external view returns (uint256);  
 }

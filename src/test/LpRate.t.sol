@@ -32,8 +32,11 @@ contract LpRateTest is StrategyFixture {
                 _amount = _amount / 1_000; // fuzz amount modifier for WETH e.g. 100 WETH --> 0.1 ETH
             }
         //
-            console2.log(strategy.valueLpToWant());
+            console2.log(_wantSymbol, strategy.valueLpToWant());
+            
 
         }
+    vm.expectRevert(); // used to see the console2.log
     }
+
 }

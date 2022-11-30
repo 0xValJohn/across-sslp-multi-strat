@@ -307,14 +307,13 @@ contract Strategy is BaseStrategy {
         return balanceOfUnstakedLPToken() + balanceOfStakedLPToken();
     }
 
-    // @note need to replicate https://github.com/across-protocol/contracts-v2/blob/e911cf59ad3469e19f04f5de1c92d6406c336042/contracts/HubPool.sol#L928
-    function valueLpToWant() public view returns (uint256) { // back to internal
-        address memory _wantAddress = address(want);
-        Struct memory _struct = hubPool.pooledTokens(_wantAddress);
-
-        IERC20 bondToken = hubPool.bondToken();
+    // @dev _exchangeRateCurrent (HubPool.sol#L928) logic replicated, as there are no view function for the rate
+    // https://github.com/across-protocol/contracts-v2/blob/e911cf59ad3469e19f04f5de1c92d6406c336042/contracts/
+    function valueLpToWant() public view returns (uint256) {
+        address _wantAddress = address(want);
+        HubPool.PooledToken memory _struct = hubPool.pooledTokens(_wantAddress);
+        address bondToken = hubPool.bondToken();
         uint256 getCurrentTime = hubPool.getCurrentTime();
-        
         uint256 lpFeeRatePerSecond = hubPool.lpFeeRatePerSecond();
         uint256 lpTokenTotalSupply = IERC20(_struct.lpToken).totalSupply();
         uint256 bondAmount = hubPool.bondAmount();
@@ -322,24 +321,22 @@ contract Strategy is BaseStrategy {
         
         if (lpTokenTotalSupply == 0) return 1e18;
 
-        // @note _updateAccumulatedLpFees logic replicated here
+        // @note _updateAccumulatedLpFees logic
         uint256 timeFromLastInteraction = getCurrentTime - _struct.lastLpFeeUpdate;
         uint256 maxUndistributedLpFees = (_struct.undistributedLpFees * lpFeeRatePerSecond * timeFromLastInteraction) / (1e18);
         uint256 accumulatedFees = maxUndistributedLpFees < _struct.undistributedLpFees ? maxUndistributedLpFees : _struct.undistributedLpFees;
         _struct.undistributedLpFees -= accumulatedFees;
         _struct.lastLpFeeUpdate = uint32(getCurrentTime);
         
-        // @note _sync logic replicated here
+        // @note _sync logic
         uint256 balance = IERC20(_wantAddress).balanceOf(address(hubPool));
         uint256 balanceSansBond = _wantAddress == address(bondToken) && _activeRequest ? balance - bondAmount : balance;
         if (balanceSansBond > _struct.liquidReserves) {
-            _struct.utilizedReserves -= int256(balanceSansBond - _struct.liquidReserves);
+            _struct.utilizedReserves -= uint256(balanceSansBond - _struct.liquidReserves);
             _struct.liquidReserves = balanceSansBond;
         }
 
-        int256 numerator = int256(_struct.liquidReserves) +
-            _struct.utilizedReserves -
-            int256(_struct.undistributedLpFees);
+        uint256 numerator = uint256(_struct.liquidReserves) + _struct.utilizedReserves - uint256(_struct.undistributedLpFees);
         return (uint256(numerator) * 1e18) / lpTokenTotalSupply;
     }
 
