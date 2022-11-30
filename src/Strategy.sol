@@ -4,10 +4,12 @@ pragma solidity ^0.8.15;
 pragma experimental ABIEncoderV2;
 
 import {BaseStrategy, StrategyParams} from "@yearnvaults/contracts/BaseStrategy.sol";
-
+import "@openzeppelin/contracts/utils/math/Math.sol";
 import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "./interfaces/IERC20Metadata.sol";
+import "./interfaces/ITradeFactory.sol";
 import "./interfaces/Across/HubPool.sol";
 import "./interfaces/Across/AcceleratingDistributor.sol";
 
@@ -18,9 +20,10 @@ contract Strategy is BaseStrategy {
 // ---------------------- STATE VARIABLES ----------------------
 
     bool internal isOriginal = true;
+    uint256 private constant max = type(uint256).max;
     address public tradeFactory;
-    HubPool public hubPool; // @note deployed at 0xc186fA914353c44b2E33eBE05f21846F1048bEda
-    AcceleratingDistributor public lpStaker; // @note deployed at 0x9040e41eF5E8b281535a96D9a48aCb8cfaBD9a48
+    HubPool public hubPool;
+    AcceleratingDistributor public lpStaker;
     IERC20 public lpToken;
     IERC20 public emissionToken;
     uint256 internal wantDecimals;
@@ -37,7 +40,7 @@ contract Strategy is BaseStrategy {
         address _lpStaker
     ) internal {
         hubPool = HubPool(_hubPool);
-        lpToken = IERC20(hubPool.pooledTokens(address(want))[0]); // @dev index 0 is lpToken
+        lpToken = IERC20(hubPool.pooledTokens(address(want)).lpToken);
         lpStaker = AcceleratingDistributor(_lpStaker);
         emissionToken = IERC20(lpStaker.rewardToken());
         wantDecimals = IERC20Metadata(address(want)).decimals();
@@ -51,7 +54,8 @@ contract Strategy is BaseStrategy {
         address _strategist,
         address _rewards,
         address _keeper,
-        address _hubPool
+        address _hubPool,
+        address _lpStaker
     ) public {
         require(address(hubPool) == address(0)); // @dev only initialize one time
         _initialize(_vault, _strategist, _rewards, _keeper);
@@ -88,7 +92,7 @@ contract Strategy is BaseStrategy {
     }
 
     function estimatedTotalAssets() public view override returns (uint256) {
-        return want.balanceOf(address(this)) + balanceOfAllLPToken() * valueLpToWant();
+        return want.balanceOf(address(this)) + balanceOfAllLPToken() * valueLpToWant() / 1e18;
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -113,7 +117,8 @@ contract Strategy is BaseStrategy {
         uint256 _wantBalance = balanceOfWant();
 
         if (_toLiquidate > _wantBalance) {
-            unchecked { (_amountFreed, _loss) = _removeliquidity(_toLiquidate - _wantBalance); } // @dev no underflow risk
+            uint256 _liquidatedAmount;
+            unchecked { (_liquidatedAmount, _loss) = _removeLiquidity(_toLiquidate - _wantBalance); } // @dev no underflow risk
             _totalAssets = estimatedTotalAssets();
         }
 
@@ -130,7 +135,7 @@ contract Strategy is BaseStrategy {
         }
 
         // @dev calculate final p&L
-        unchecked { _loss = _loss + (_totalDebt > _totalAssets ? _totalDebt - _totalAssets : 0); } // @dev no underflow risk
+        unchecked { (_loss = _loss + (_totalDebt > _totalAssets ? _totalDebt - _totalAssets : 0)); } // @dev no underflow risk
         
         if (_loss > _profit) {
             _loss = _loss - _profit;
@@ -155,7 +160,6 @@ contract Strategy is BaseStrategy {
         returns (uint256 _liquidatedAmount, uint256 _loss)
     {
         uint256 _liquidAssets = balanceOfWant();
-
         if (_liquidAssets < _amountNeeded) {
             (_liquidatedAmount, _loss) = _removeLiquidity(_amountNeeded - _liquidAssets);
             _liquidAssets = balanceOfWant();
@@ -249,23 +253,11 @@ contract Strategy is BaseStrategy {
         _stake(balanceOfUnstakedLPToken());
     }
 
-    function _removeLiquidity(uint256 _amountNeeded) internal returns (uint256 _liquidatedAmount, uint256 _loss)
-    {
-        uint256 _preWithdrawWant = balanceOfWant();
+    function _removeLiquidity(uint256 _amountNeeded) internal returns (uint256 _liquidatedAmount, uint256 _loss) {
         uint256 _wantAvailable = Math.min(availableLiquidity(), _amountNeeded); // @dev checking the available liquidity to withdraw
-        uint256 _lpTokenAmount = _wantAvailable/valueLpToWant();
+        uint256 _lpTokenAmount = _wantAvailable / valueLpToWant() / 1e18;
         _unstake(_lpTokenAmount); // @dev this will reset the reward multiplier
-        hubPool.removeLiquidity(address(want), _lpTokenAmount); // @dev 3rd arg is optional, to wrap and unwrap ETH (not required)
-        
-        uint256 _liquidAssets = balanceOfWant() - _preWithdrawWant;
-        if (_amountNeeded > _liquidAssets) {
-            _liquidatedAmount = _liquidAssets;
-            uint256 balanceOfLPTokens = valueLpToWant(balanceOfAllLPToken());
-            uint256 _potentialLoss = _amountNeeded - _liquidAssets;
-            _loss = _potentialLoss > balanceOfLPTokens ? _potentialLoss - balanceOfLPTokens:0;
-        } else {
-            _liquidatedAmount = _amountNeeded;
-        }
+        hubPool.removeLiquidity(address(want), _lpTokenAmount, false); // @dev 3rd arg is optional, to wrap and unwrap ETH (not required)
     }
 
     function _stake(uint256 _amountToStake) internal {
@@ -279,7 +271,7 @@ contract Strategy is BaseStrategy {
 
     function _claimRewards() internal {
         if (pendingRewards() > 0) {
-        lpStaker.withdrawRewards(address(lpToken));
+        lpStaker.withdrawReward(address(lpToken));
         }
     }
 
@@ -309,20 +301,20 @@ contract Strategy is BaseStrategy {
     // @dev Will slightly underestimate rate when l1Token balance > liquidReserves
     // Hubpool.sync (internal) can't be called to account for recently concluded L2 -> L1 transfer and associated accounting
     function valueLpToWant() public view returns (uint256) { 
-        _utilizedReserves = hubPool.pooledTokens(address(want))[3];
-        _liquidReserves = hubPool.pooledTokens(address(want))[4];
-        _undistributedLpFees = hubPool.pooledTokens(address(want))[5];
-        _lpTokenSupply = lpToken.totalSupply();
-        return (_liquidReserves + _utilizedReserves - _undistributedLpFees) / _lpTokenSupply;
+        uint256 _utilizedReserves = hubPool.pooledTokens(address(want)).utilizedReserves; // @note gas-opti: could probably make one hubPool.pooledTokens call
+        uint256 _liquidReserves = hubPool.pooledTokens(address(want)).liquidReserves;
+        uint256 _undistributedLpFees = hubPool.pooledTokens(address(want)).undistributedLpFees;
+        uint256 _lpTokenSupply = lpToken.totalSupply();
+        return (_liquidReserves + _utilizedReserves -_undistributedLpFees) * 1e18 / _lpTokenSupply ; // @dev returns rate with 18 decimals
     }
-    
+
     // @dev When trying to withdraw more funds than available (i.e l1TokensToReturn > liquidReserves), lpStaker will underflow
     function availableLiquidity() public view returns (uint256) {
-        return hubPool.pooledTokens(address(want))[4]; // @dev index 4 is liquidReserves
+        return hubPool.pooledTokens(address(want)).liquidReserves;
     }
 
     function pendingRewards() public view returns (uint256) {
-        return lpStaker.getOutstandingRewards(address(this));
+        return lpStaker.getOutstandingRewards(address(lpToken), address(this));
     }
 
 }
