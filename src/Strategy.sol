@@ -180,6 +180,7 @@ contract Strategy is BaseStrategy {
     function prepareMigration(address _newStrategy) internal override {
         _unstake(balanceOfStakedLPToken());
         lpToken.safeTransfer(_newStrategy, balanceOfUnstakedLPToken());
+	emissionToken.safeTransfer(_newStrategy, balanceOfEmissionToken());
     }
 
 // ---------------------- KEEP3RS ----------------------
