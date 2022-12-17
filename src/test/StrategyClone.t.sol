@@ -47,9 +47,7 @@ contract StrategyMigrationTest is StrategyFixture {
                 address(vault),
                 strategist,
                 rewards,
-                keeper,
-                _hubPool,
-                _lpStaker
+                keeper
             );
 
             vm.prank(gov);
@@ -99,9 +97,7 @@ contract StrategyMigrationTest is StrategyFixture {
                 address(vault),
                 strategist,
                 rewards,
-                keeper,
-                _hubPool,
-                _lpStaker
+                keeper
             );
 
             vm.prank(gov);
@@ -114,9 +110,7 @@ contract StrategyMigrationTest is StrategyFixture {
                 address(vault),
                 strategist,
                 rewards,
-                keeper,
-                _hubPool,
-                _lpStaker
+                keeper
             );
         }
     }
@@ -149,9 +143,7 @@ contract StrategyMigrationTest is StrategyFixture {
                 address(vault),
                 strategist,
                 rewards,
-                keeper,
-                _hubPool,
-                _lpStaker
+                keeper
             );
 
             vm.prank(gov);
@@ -164,9 +156,7 @@ contract StrategyMigrationTest is StrategyFixture {
                 address(vault),
                 strategist,
                 rewards,
-                keeper,
-                _hubPool,
-                _lpStaker
+                keeper
             );
         }
     }

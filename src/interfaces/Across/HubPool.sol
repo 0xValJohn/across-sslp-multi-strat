@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity 0.8.15;
-interface HubPool {  
+
+interface HubPool {
     struct PooledToken {
         address lpToken;
         bool isEnabled;
@@ -9,6 +10,7 @@ interface HubPool {
         uint256 liquidReserves;
         uint256 undistributedLpFees;
     }
+
     struct RootBundleProposal {
         bytes32 poolRebalanceRoot;
         bytes32 relayerRefundRoot;
@@ -26,5 +28,6 @@ interface HubPool {
     function bondAmount() external view returns (uint256);
     function bondToken() external view returns (address);
     function getCurrentTime() external view returns (uint256);
-    function lpFeeRatePerSecond() external view returns (uint256);  
+    function lpFeeRatePerSecond() external view returns (uint256);
+    function exchangeRateCurrent(address l1Token) external returns (uint256);
 }

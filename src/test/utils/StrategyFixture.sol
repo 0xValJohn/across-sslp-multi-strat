@@ -21,9 +21,6 @@ contract StrategyFixture is ExtendedTest {
 
     IERC20 public weth;
 
-    address public _hubPool = 0xc186fA914353c44b2E33eBE05f21846F1048bEda;
-    address public _lpStaker = 0x9040e41eF5E8b281535a96D9a48aCb8cfaBD9a48;
-
     AssetFixture[] public assetFixtures;
 
     mapping(string => address) public tokenAddrs;
@@ -102,9 +99,7 @@ contract StrategyFixture is ExtendedTest {
     // Deploys a strategy
     function deployStrategy(address _vault, string memory _tokenSymbol) public returns (address) {
         Strategy _strategy = new Strategy(
-            _vault,
-            _hubPool,
-            _lpStaker
+            _vault
             );
 
         return address(_strategy);

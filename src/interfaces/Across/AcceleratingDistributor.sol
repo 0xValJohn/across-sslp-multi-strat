@@ -8,4 +8,5 @@ interface AcceleratingDistributor {
     function withdrawReward(address stakedToken) external;
     function getOutstandingRewards(address stakedToken, address account) external view returns (uint256);
     function getUserStake(address stakedToken, address account) external view returns (uint256);
+    function exit(address stakedToken) external;
 }
