@@ -302,12 +302,6 @@ contract StrategyOperationsTest is StrategyFixture {
             // TODO: Add some code before harvest #2 to simulate earning yield
             console2.log(strategy.balanceOfEmissionToken());
 
-
-
-
-
-
-
             vm.prank(gov);
             vault.updateStrategyDebtRatio(address(strategy), 5_000);
 
