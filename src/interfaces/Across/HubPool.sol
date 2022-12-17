@@ -29,5 +29,4 @@ interface HubPool {
     function bondToken() external view returns (address);
     function getCurrentTime() external view returns (uint256);
     function lpFeeRatePerSecond() external view returns (uint256);
-    function exchangeRateCurrent(address l1Token) external returns (uint256);
 }

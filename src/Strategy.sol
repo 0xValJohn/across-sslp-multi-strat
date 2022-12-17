@@ -223,7 +223,7 @@ contract Strategy is BaseStrategy {
 
     function _removeLiquidity(uint256 _wantNeeded) internal returns (uint256 _liquidatedAmount, uint256 _loss) {
         uint256 _wantAvailable = Math.min(availableLiquidity(), Math.min(_wantNeeded, balanceOfAllLPToken())); // @note check available liquidity in native assets
-        uint256 _lpAmount = (_wantAvailable * 1e18) / hubPool.exchangeRateCurrent(address(lpToken));
+        uint256 _lpAmount = (_wantAvailable * 1e18) / valueLpToWant();
         uint256 _wantBefore = balanceOfWant();
         _unstake(_lpAmount); // @note will reset the reward multiplier
         hubPool.removeLiquidity(address(want), _lpAmount, false);

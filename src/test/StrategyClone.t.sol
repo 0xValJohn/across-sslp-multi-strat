@@ -8,7 +8,7 @@ import {IVault} from "../interfaces/Vault.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-contract StrategyMigrationTest is StrategyFixture {
+contract StrategyCloneTest is StrategyFixture {
     function setUp() public override {
         super.setUp();
     }
