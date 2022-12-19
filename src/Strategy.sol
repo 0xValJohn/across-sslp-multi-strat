@@ -49,7 +49,6 @@ contract Strategy is BaseStrategy {
         address _rewards,
         address _keeper
     ) public {
-        require(address(hubPool) == address(0)); // @note only initialize one time
         _initialize(_vault, _strategist, _rewards, _keeper);
         _initializeStrategy();
     }
