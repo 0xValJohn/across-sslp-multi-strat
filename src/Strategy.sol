@@ -77,9 +77,11 @@ contract Strategy is BaseStrategy {
     function name() external view override returns (string memory) {
         return string(abi.encodePacked("StrategyAcross", IERC20Metadata(address(want)).symbol()));
     }
-
+    
+    // TODO: Does want token and the corresponding LP token always same decimals? 
+    // if yes, then this function works correctly, if not we need to adjust some decimal logic
     function estimatedTotalAssets() public view override returns (uint256) {
-        return want.balanceOf(address(this)) + balanceOfAllLPToken() * valueLpToWant() / 1e18;
+        return want.balanceOf(address(this)) + balanceOfAllLPToken() * _valueLpToWant() / 1e18;
     }
 
     function prepareReturn(uint256 _debtOutstanding)
@@ -99,15 +101,14 @@ contract Strategy is BaseStrategy {
 
         // @note free up _debtOutstanding + our profit
         uint256 _toLiquidate = _debtOutstanding + _profit;
-        uint256 _wantBalance = balanceOfWant();
+        uint256 _liquidWant = balanceOfWant();
 
-        if (_toLiquidate > _wantBalance) {
+        if (_toLiquidate > _liquidWant) {
             uint256 _liquidatedAmount;
-            (_liquidatedAmount, _loss) = _removeLiquidity(_toLiquidate - _wantBalance);
-            _totalAssets = estimatedTotalAssets();
+            (_liquidatedAmount, _loss) = liquidatePosition(_toLiquidate - _liquidWant);
         }
 
-        uint256 _liquidWant = balanceOfWant();
+        _liquidWant = balanceOfWant();
 
         // @note calculate _debtPayment
         // @note enough to pay for all profit and _debtOutstanding (partial or full)
@@ -150,10 +151,15 @@ contract Strategy is BaseStrategy {
         override
         returns (uint256 _liquidatedAmount, uint256 _loss)
     {
+
+        // Withdraw the amount needed or the maximum available liquidity!
+        _amountNeeded = Math.min(_amountNeeded, availableLiquidity()); 
         uint256 _liquidAssets = balanceOfWant();
         if (_liquidAssets < _amountNeeded) {
-            (_liquidatedAmount, _loss) = _removeLiquidity(_amountNeeded - _liquidAssets);
+            _liquidatedAmount = _withdrawSome(_amountNeeded - _liquidAssets);
             _liquidAssets = balanceOfWant();
+
+            if (_amountNeeded > _liquidAssets) _loss = _amountNeeded - _liquidAssets;
         }
 
         _liquidatedAmount = Math.min(_amountNeeded, _liquidAssets);
@@ -161,16 +167,25 @@ contract Strategy is BaseStrategy {
     }
 
     function liquidateAllPositions() internal override returns (uint256) {
-        uint256 _balanceOfAllLPToken = balanceOfAllLPToken();
-        if (_balanceOfAllLPToken > 0) {
-            _removeLiquidity(_balanceOfAllLPToken);
+        uint256 _balanceOfStakedLPToken = balanceOfStakedLPToken();
+        if (_balanceOfStakedLPToken > 0) {
+            _unstake(_balanceOfStakedLPToken);
+        }
+        uint256 _balanceOfUnstakedLPToken = balanceOfUnstakedLPToken();
+        if (_balanceOfUnstakedLPToken > 0) {
+            _removeLiquidity(_balanceOfUnstakedLPToken);
         }
         return balanceOfWant();
     }
 
     function prepareMigration(address _newStrategy) internal override {
-        lpStaker.exit(address(lpToken)); // @note exits staking position and get rewards
-        lpToken.safeTransfer(_newStrategy, balanceOfUnstakedLPToken());
+        if (balanceOfStakedLPToken() > 0) {
+            lpStaker.exit(address(lpToken)); // @note exits staking position and get rewards
+        }
+
+        if (balanceOfUnstakedLPToken() > 0) {
+            lpToken.safeTransfer(_newStrategy, balanceOfUnstakedLPToken());
+        }
         emissionToken.safeTransfer(_newStrategy, balanceOfEmissionToken());
     }
 
@@ -219,19 +234,37 @@ contract Strategy is BaseStrategy {
         hubPool.addLiquidity(address(want), _wantAmount);
         _stake(balanceOfUnstakedLPToken());
     }
-
-    function _removeLiquidity(uint256 _wantNeeded) internal returns (uint256 _liquidatedAmount, uint256 _loss) {
-        uint256 _wantAvailable = Math.min(availableLiquidity(), Math.min(_wantNeeded, balanceOfAllLPToken())); // @note check available liquidity in native assets
-        uint256 _lpAmount = (_wantAvailable * 1e18) / valueLpToWant();
+    
+    // @params _wantNeeded WANT we need to free
+    function _withdrawSome(uint256 _wantNeeded) internal returns (uint256 _liquidatedAmount) {
+        // how much LP we need to unstake to match exact want needed
+        uint256 _lpAmount = (_wantNeeded * 1e18) / _valueLpToWant();
+        
+        // If for some reason we have unstaked LP tokens idle in the strategy, account them
+        if (_lpAmount > balanceOfUnstakedLPToken()) {
+            unchecked { _lpAmount = _lpAmount - balanceOfUnstakedLPToken(); } 
+        }
+        
+        // unstake the LP needed or the entire staked balance
+        _lpAmount = Math.min(_lpAmount, balanceOfStakedLPToken());
+        
         uint256 _wantBefore = balanceOfWant();
         _unstake(_lpAmount); // @note will reset the reward multiplier
-        hubPool.removeLiquidity(address(want), _lpAmount, false);
+        _removeLiquidity(_lpAmount);
         _liquidatedAmount = balanceOfWant() - _wantBefore;
-        _loss = _wantAvailable - _liquidatedAmount;
+    }
+
+    function _removeLiquidity(uint256 _lpAmount) internal {
+        hubPool.removeLiquidity(address(want), _lpAmount, false);
     }
 
     function _stake(uint256 _amountToStake) internal {
         lpStaker.stake(address(lpToken), _amountToStake);
+    }
+    
+    // Just in case we need to easily stake idle LP tokens
+    function stake(uint256 _amountToStake) external onlyVaultManagers {
+        _stake(_amountToStake);
     }
 
     function _unstake(uint256 _amountToUnstake) internal {
@@ -264,42 +297,42 @@ contract Strategy is BaseStrategy {
 
     // @dev _exchangeRateCurrent (HubPool.sol#L928) logic replicated, as there are no view function for the rate
     // https://github.com/across-protocol/contracts-v2/blob/e911cf59ad3469e19f04f5de1c92d6406c336042/contracts/
-    function valueLpToWant() public view returns (uint256) {
+    // Return 18 decimal!
+    function _valueLpToWant() internal view returns (uint256) {
         address _wantAddress = address(want);
         HubPool _hubPool = hubPool;
         HubPool.PooledToken memory _struct = hubPool.pooledTokens(_wantAddress);
-        address bondToken = _hubPool.bondToken();
         uint256 getCurrentTime = _hubPool.getCurrentTime();
-        uint256 lpFeeRatePerSecond = _hubPool.lpFeeRatePerSecond();
-        uint256 lpTokenTotalSupply = IERC20(_struct.lpToken).totalSupply();
-        uint256 bondAmount = _hubPool.bondAmount();
-        bool _activeRequest = _hubPool.rootBundleProposal().unclaimedPoolRebalanceLeafCount != 0;
         
-        if (lpTokenTotalSupply == 0) return wantDecimals;
+        if (IERC20(_struct.lpToken).totalSupply() == 0) return 18;
 
         // @note _updateAccumulatedLpFees logic
         uint256 timeFromLastInteraction = getCurrentTime - _struct.lastLpFeeUpdate;
-        uint256 maxUndistributedLpFees = (_struct.undistributedLpFees * lpFeeRatePerSecond * timeFromLastInteraction) / (1e18);
+        uint256 maxUndistributedLpFees = (_struct.undistributedLpFees * _hubPool.lpFeeRatePerSecond() * timeFromLastInteraction) / (1e18);
         uint256 accumulatedFees = maxUndistributedLpFees < _struct.undistributedLpFees ? maxUndistributedLpFees : _struct.undistributedLpFees;
         _struct.undistributedLpFees -= accumulatedFees;
         _struct.lastLpFeeUpdate = uint32(getCurrentTime);
         
         // @note _sync logic
         uint256 balance = IERC20(_wantAddress).balanceOf(address(_hubPool));
-        uint256 balanceSansBond = _wantAddress == address(bondToken) && _activeRequest ? balance - bondAmount : balance;
+        uint256 balanceSansBond = _wantAddress == address(_hubPool.bondToken()) && _hubPool.rootBundleProposal().unclaimedPoolRebalanceLeafCount != 0 ? balance - _hubPool.bondAmount() : balance;
         if (balanceSansBond > _struct.liquidReserves) {
             _struct.utilizedReserves -= uint256(balanceSansBond - _struct.liquidReserves);
             _struct.liquidReserves = balanceSansBond;
         }
         uint256 numerator = uint256(_struct.liquidReserves) + _struct.utilizedReserves - uint256(_struct.undistributedLpFees);
-        return (uint256(numerator) * 1e18) / lpTokenTotalSupply;
+        return (uint256(numerator) * 1e18) / IERC20(_struct.lpToken).totalSupply();
+    }
+
+    function valueLpToWant() external view returns (uint256) {
+        return _valueLpToWant();
     }
 
     function availableLiquidity() public view returns (uint256) {
         return hubPool.pooledTokens(address(want)).liquidReserves; // @note returns native asset avail.
     }
 
-    function pendingRewards() public view returns (uint256) {
+    function pendingRewards() external view returns (uint256) {
         return lpStaker.getOutstandingRewards(address(lpToken), address(this));
     }
 }
