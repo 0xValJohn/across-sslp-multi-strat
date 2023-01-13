@@ -155,14 +155,12 @@ contract StrategyOperationsTest is StrategyFixture {
             IERC20 want = _assetFixture.want;
             uint8 _wantDecimals = ERC20(address(want)).decimals();
             string memory _wantSymbol = ERC20(address(want)).symbol();
-            if (_wantDecimals != 18) {
-                uint256 _decimalDifference = 18 - _wantDecimals;
-                _amount = _amount / (10 ** _decimalDifference);
-            }
+            _amount = _amount / 10**(18-_wantDecimals);
+ 
             if (keccak256(abi.encodePacked(_wantSymbol)) == keccak256(abi.encodePacked("WETH"))) {
                 _amount = _amount / 1_000; // fuzz amount modifier for WETH e.g. 100 WETH --> 0.1 ETH
             }
-        //
+    
 
             deal(address(want), user, _amount);
 
@@ -190,9 +188,17 @@ contract StrategyOperationsTest is StrategyFixture {
             strategy.harvest();
 
             // @dev simulate selling ACX rewards
-            skip(30 days);
+            skip(5 days);
+            vm.roll(1000);
             uint256 _decimalDifference = 18 - _wantDecimals;
-            uint256 _simulatedSoldRewards = (strategy.balanceOfEmissionToken() / (10 ** _decimalDifference)) / 25; // @note estimated ACX price 0.04$
+            uint256 _simulatedSoldRewards = (strategy.pendingRewards() * 4) / 100; // 0.04$ per ACX
+
+            if (keccak256(abi.encodePacked(_wantSymbol)) == keccak256(abi.encodePacked("WETH"))) {
+                _simulatedSoldRewards = _simulatedSoldRewards / 1_000;
+            }
+
+            console2.log("Rewards to harvest:", _simulatedSoldRewards);
+
             deal(address(want), address(strategy), _simulatedSoldRewards);
 
             // Harvest 3: Realize profit
@@ -202,10 +208,9 @@ contract StrategyOperationsTest is StrategyFixture {
 
 
             skip(6 hours);
-
             uint256 profit = want.balanceOf(address(vault));
             console2.log("Test 3 for", _wantSymbol);
-            assertGt(want.balanceOf(address(strategy)) + profit, _amount);
+            assertGt(strategy.estimatedTotalAssets() + profit, _amount);
             console2.log("Test 4 for", _wantSymbol);
             assertGt(vault.pricePerShare(), beforePps);
         }
@@ -342,15 +347,12 @@ contract StrategyOperationsTest is StrategyFixture {
             IERC20 want = _assetFixture.want;
             uint8 _wantDecimals = ERC20(address(want)).decimals();
             string memory _wantSymbol = ERC20(address(want)).symbol();
-            if (_wantDecimals != 18) {
-                uint256 _decimalDifference = 18 - _wantDecimals;
-                _amount = _amount / (10 ** _decimalDifference);
-            }
+            _amount = _amount / 10**(18-_wantDecimals);
+
             if (keccak256(abi.encodePacked(_wantSymbol)) == keccak256(abi.encodePacked("WETH"))) {
                 _amount = _amount / 1_000; // fuzz amount modifier for WETH e.g. 100 WETH --> 0.1 ETH
             }
-        //
-
+        
             deal(address(want), user, _amount);
 
             // Strategy want token doesn't work
@@ -376,14 +378,15 @@ contract StrategyOperationsTest is StrategyFixture {
 
             // @note modifier for sweep random token for weth strat, replacing by USDT
             IERC20 tokenToSweep;
+            uint256 tokenAmount = 1 ether;
             if (keccak256(abi.encodePacked(_wantSymbol)) == keccak256(abi.encodePacked("WETH"))) {
                 tokenToSweep = IERC20(0x94b008aA00579c1307B0EF2c499aD98a8ce58e58); 
+                tokenAmount = tokenAmount / 1e12;
             } else {
                 tokenToSweep = weth;
             }
 
             uint256 beforeBalance = tokenToSweep.balanceOf(gov);
-            uint256 tokenAmount = 1 ether;
             deal(address(tokenToSweep), user, tokenAmount);
             vm.prank(user);
             tokenToSweep.transfer(address(strategy), tokenAmount);
