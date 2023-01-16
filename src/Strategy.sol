@@ -78,8 +78,7 @@ contract Strategy is BaseStrategy {
         return string(abi.encodePacked("StrategyAcross", IERC20Metadata(address(want)).symbol()));
     }
     
-    // TODO: Does want token and the corresponding LP token always same decimals? 
-    // if yes, then this function works correctly, if not we need to adjust some decimal logic
+    // @note want.balanceOf() and balanceOfAllLPToken() returns naive decimals, _valueLpToWant() returns 18
     function estimatedTotalAssets() public view override returns (uint256) {
         return want.balanceOf(address(this)) + balanceOfAllLPToken() * _valueLpToWant() / 1e18;
     }
@@ -152,7 +151,7 @@ contract Strategy is BaseStrategy {
         returns (uint256 _liquidatedAmount, uint256 _loss)
     {
 
-        // Withdraw the amount needed or the maximum available liquidity!
+        // @note withdraw the amount needed or the maximum available liquidity!
         _amountNeeded = Math.min(_amountNeeded, availableLiquidity()); 
         uint256 _liquidAssets = balanceOfWant();
         if (_liquidAssets < _amountNeeded) {
@@ -237,15 +236,15 @@ contract Strategy is BaseStrategy {
     
     // @params _wantNeeded WANT we need to free
     function _withdrawSome(uint256 _wantNeeded) internal returns (uint256 _liquidatedAmount) {
-        // how much LP we need to unstake to match exact want needed
+        // @note how much LP we need to unstake to match exact want needed
         uint256 _lpAmount = (_wantNeeded * 1e18) / _valueLpToWant();
         
-        // If for some reason we have unstaked LP tokens idle in the strategy, account them
+        // @note if for some reason we have unstaked LP tokens idle in the strategy, account them
         if (_lpAmount > balanceOfUnstakedLPToken()) {
             unchecked { _lpAmount = _lpAmount - balanceOfUnstakedLPToken(); } 
         }
         
-        // unstake the LP needed or the entire staked balance
+        // @note unstake the LP needed or the entire staked balance
         _lpAmount = Math.min(_lpAmount, balanceOfStakedLPToken());
         
         uint256 _wantBefore = balanceOfWant();
@@ -262,7 +261,7 @@ contract Strategy is BaseStrategy {
         lpStaker.stake(address(lpToken), _amountToStake);
     }
     
-    // Just in case we need to easily stake idle LP tokens
+    // @note just in case we need to easily stake idle LP tokens
     function stake(uint256 _amountToStake) external onlyVaultManagers {
         _stake(_amountToStake);
     }
@@ -297,7 +296,7 @@ contract Strategy is BaseStrategy {
 
     // @dev _exchangeRateCurrent (HubPool.sol#L928) logic replicated, as there are no view function for the rate
     // https://github.com/across-protocol/contracts-v2/blob/e911cf59ad3469e19f04f5de1c92d6406c336042/contracts/
-    // Return 18 decimal!
+    // @note Returns 18 decimal
     function _valueLpToWant() internal view returns (uint256) {
         address _wantAddress = address(want);
         HubPool _hubPool = hubPool;
