@@ -152,7 +152,7 @@ contract Strategy is BaseStrategy {
     {
 
         // @note withdraw the amount needed or the maximum available liquidity!
-        _amountNeeded = Math.min(_amountNeeded, availableLiquidity()); 
+        _amountNeeded = Math.min(_amountNeeded - balanceOfWant(), availableLiquidity()); 
         uint256 _liquidAssets = balanceOfWant();
         if (_liquidAssets < _amountNeeded) {
             _liquidatedAmount = _withdrawSome(_amountNeeded - _liquidAssets);
@@ -181,9 +181,9 @@ contract Strategy is BaseStrategy {
         if (balanceOfStakedLPToken() > 0) {
             lpStaker.exit(address(lpToken)); // @note exits staking position and get rewards
         }
-
-        if (balanceOfUnstakedLPToken() > 0) {
-            lpToken.safeTransfer(_newStrategy, balanceOfUnstakedLPToken());
+        uint256 _balanceOfUnstakedLPToken = balanceOfUnstakedLPToken();
+        if (_balanceOfUnstakedLPToken > 0) {
+            lpToken.safeTransfer(_newStrategy, _balanceOfUnstakedLPToken);
         }
         emissionToken.safeTransfer(_newStrategy, balanceOfEmissionToken());
     }
@@ -238,17 +238,22 @@ contract Strategy is BaseStrategy {
     function _withdrawSome(uint256 _wantNeeded) internal returns (uint256 _liquidatedAmount) {
         // @note how much LP we need to unstake to match exact want needed
         uint256 _lpAmount = (_wantNeeded * 1e18) / _valueLpToWant();
-        
+        uint256 _balanceOfUnstakedLPToken = balanceOfUnstakedLPToken();
+
         // @note if for some reason we have unstaked LP tokens idle in the strategy, account them
-        if (_lpAmount > balanceOfUnstakedLPToken()) {
-            unchecked { _lpAmount = _lpAmount - balanceOfUnstakedLPToken(); } 
+        if (_lpAmount > _balanceOfUnstakedLPToken) {
+            unchecked { _lpAmount = _lpAmount - _balanceOfUnstakedLPToken; } 
         }
         
         // @note unstake the LP needed or the entire staked balance
         _lpAmount = Math.min(_lpAmount, balanceOfStakedLPToken());
         
         uint256 _wantBefore = balanceOfWant();
-        _unstake(_lpAmount); // @note will reset the reward multiplier
+        uint256 _balanceOfUnstakedLPToken = balanceOfUnstakedLPToken();
+        if (_lpAmount > _balanceOfUnstakedLPToken) {
+            _unstake(_lpAmount - _balanceOfUnstakedLPToken); // @note will reset the reward multiplier
+        }
+        
         _removeLiquidity(_lpAmount);
         _liquidatedAmount = balanceOfWant() - _wantBefore;
     }
@@ -299,22 +304,20 @@ contract Strategy is BaseStrategy {
     // @note Returns 18 decimal
     function _valueLpToWant() internal view returns (uint256) {
         address _wantAddress = address(want);
-        HubPool _hubPool = hubPool;
         HubPool.PooledToken memory _struct = hubPool.pooledTokens(_wantAddress);
-        uint256 getCurrentTime = _hubPool.getCurrentTime();
-        
-        if (IERC20(_struct.lpToken).totalSupply() == 0) return 18;
+
+        if (IERC20(_struct.lpToken).totalSupply() == 0) return 1e18;
 
         // @note _updateAccumulatedLpFees logic
-        uint256 timeFromLastInteraction = getCurrentTime - _struct.lastLpFeeUpdate;
-        uint256 maxUndistributedLpFees = (_struct.undistributedLpFees * _hubPool.lpFeeRatePerSecond() * timeFromLastInteraction) / (1e18);
+        uint256 timeFromLastInteraction = block.timestamp - _struct.lastLpFeeUpdate;
+        uint256 maxUndistributedLpFees = (_struct.undistributedLpFees * hubPool.lpFeeRatePerSecond() * timeFromLastInteraction) / (1e18);
         uint256 accumulatedFees = maxUndistributedLpFees < _struct.undistributedLpFees ? maxUndistributedLpFees : _struct.undistributedLpFees;
         _struct.undistributedLpFees -= accumulatedFees;
-        _struct.lastLpFeeUpdate = uint32(getCurrentTime);
+        _struct.lastLpFeeUpdate = uint32(block.timestamp);
         
         // @note _sync logic
-        uint256 balance = IERC20(_wantAddress).balanceOf(address(_hubPool));
-        uint256 balanceSansBond = _wantAddress == address(_hubPool.bondToken()) && _hubPool.rootBundleProposal().unclaimedPoolRebalanceLeafCount != 0 ? balance - _hubPool.bondAmount() : balance;
+        uint256 balance = IERC20(_wantAddress).balanceOf(address(hubPool));
+        uint256 balanceSansBond = _wantAddress == address(hubPool.bondToken()) && hubPool.rootBundleProposal().unclaimedPoolRebalanceLeafCount != 0 ? balance - hubPool.bondAmount() : balance;
         if (balanceSansBond > _struct.liquidReserves) {
             _struct.utilizedReserves -= uint256(balanceSansBond - _struct.liquidReserves);
             _struct.liquidReserves = balanceSansBond;
