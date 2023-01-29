@@ -310,10 +310,30 @@ contract StrategyOperationsTest is StrategyFixture {
             vm.prank(gov);
             vault.updateStrategyDebtRatio(address(strategy), 5_000);
 
-            // Harvest 2: Realize profit
+            // Harvest 2: Realize profit & claim rewards
             skip(1);
             vm.prank(strategist);
             strategy.harvest();
+
+            // @dev simulate selling ACX rewards
+            skip(5 days);
+            vm.roll(1000);
+            uint256 _decimalDifference = 18 - _wantDecimals;
+            uint256 _simulatedSoldRewards = (strategy.pendingRewards() * 4) / 100; // 0.04$ per ACX
+
+            if (keccak256(abi.encodePacked(_wantSymbol)) == keccak256(abi.encodePacked("WETH"))) {
+                _simulatedSoldRewards = _simulatedSoldRewards / 1_000;
+            }
+
+            console2.log("Rewards to harvest:", _simulatedSoldRewards);
+
+            deal(address(want), address(strategy), _simulatedSoldRewards);
+
+            // Harvest 3: Realize profit
+            skip(1);
+            vm.prank(strategist);
+            strategy.harvest();
+
             //Make sure we have updated the debt ratio of the strategy
             assertRelApproxEq(
                 strategy.estimatedTotalAssets(), 
@@ -376,11 +396,11 @@ contract StrategyOperationsTest is StrategyFixture {
             // vm.expectRevert("!protected");
             // strategy.sweep(strategy.protectedToken());
 
-            // @note modifier for sweep random token for weth strat, replacing by USDT
+            // @note modifier for sweep random token for weth strat, replacing by USDC
             IERC20 tokenToSweep;
             uint256 tokenAmount = 1 ether;
             if (keccak256(abi.encodePacked(_wantSymbol)) == keccak256(abi.encodePacked("WETH"))) {
-                tokenToSweep = IERC20(0x94b008aA00579c1307B0EF2c499aD98a8ce58e58); 
+                tokenToSweep = usdc;
                 tokenAmount = tokenAmount / 1e12;
             } else {
                 tokenToSweep = weth;

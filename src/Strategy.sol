@@ -89,51 +89,41 @@ contract Strategy is BaseStrategy {
         returns (uint256 _profit, uint256 _loss, uint256 _debtPayment)
     {
         _claimRewards();
-
+        _debtPayment = _debtOutstanding;
         uint256 _totalAssets = estimatedTotalAssets();
         uint256 _totalDebt = vault.strategies(address(this)).totalDebt;
+        uint256 _wantBalance = balanceOfWant();
 
-        // @note calculate intial profits
-        unchecked {
-            _profit = _totalAssets > _totalDebt ? _totalAssets - _totalDebt : 0;
-        } // @note no underflow risk
-
-        // @note free up _debtOutstanding + our profit
-        uint256 _toLiquidate = _debtOutstanding + _profit;
-        uint256 _liquidWant = balanceOfWant();
-
-        if (_toLiquidate > _liquidWant) {
-            uint256 _liquidatedAmount;
-            (_liquidatedAmount, _loss) = liquidatePosition(_toLiquidate - _liquidWant);
+        if (_totalDebt < _totalAssets){
+            unchecked { _profit = _totalAssets - _totalDebt; }
+        }
+        else {
+            unchecked { _loss = _totalDebt - _totalAssets; }
         }
 
-        _liquidWant = balanceOfWant();
+        uint256 _toLiquidate = _debtPayment + _profit;
 
-        // @note calculate _debtPayment
-        // @note enough to pay for all profit and _debtOutstanding (partial or full)
-        if (_liquidWant > _profit) {
-            _debtPayment = Math.min(_liquidWant - _profit, _debtOutstanding);
-            // @note enough to pay profit (partial or full) only
-        } else {
-            _profit = _liquidWant;
-            _debtPayment = 0;
-        }
+        // @note _loss from withdrawals are recognised here
+        if (_toLiquidate > _wantBalance) {
+            unchecked { _toLiquidate -= _wantBalance; }
+            (, uint256 _withdrawLoss) = withdrawSome(_toLiquidate);
 
-        // @note calculate final p&L
-        unchecked {
-            (_loss = _loss + (_totalDebt > _totalAssets ? _totalDebt - _totalAssets : 0));
-        } // @note no underflow risk
-
-        if (_loss > _profit) {
-            unchecked {
-                _loss = _loss - _profit;
+            if(_withdrawLoss < _profit){
+                unchecked { _profit -= _withdrawLoss; }
             }
-            _profit = 0;
-        } else {
-            unchecked {
-                _profit = _profit - _loss;
+            else {
+                unchecked { _loss = _loss + _withdrawLoss - _profit; }
+                _profit = 0;
             }
-            _loss = 0;
+
+            uint256 _liquidWant = balanceOfWant();
+            
+            if (_liquidWant <= _profit) {
+                _profit = _liquidWant;
+                _debtPayment = 0;
+            } else if (_liquidWant < _debtPayment + _profit) {
+                _debtPayment = _liquidWant - _profit;
+            }
         }
     }
 
@@ -155,7 +145,7 @@ contract Strategy is BaseStrategy {
         _amountNeeded = Math.min(_amountNeeded - balanceOfWant(), availableLiquidity()); 
         uint256 _liquidAssets = balanceOfWant();
         if (_liquidAssets < _amountNeeded) {
-            _liquidatedAmount = _withdrawSome(_amountNeeded - _liquidAssets);
+            (_liquidatedAmount, _loss) = withdrawSome(_amountNeeded - _liquidAssets);
             _liquidAssets = balanceOfWant();
 
             if (_amountNeeded > _liquidAssets) _loss = _amountNeeded - _liquidAssets;
@@ -234,10 +224,11 @@ contract Strategy is BaseStrategy {
         _stake(balanceOfUnstakedLPToken());
     }
     
-    // @params _wantNeeded WANT we need to free
-    function _withdrawSome(uint256 _wantNeeded) internal returns (uint256 _liquidatedAmount) {
+    // @params _amountNeeded WANT we need to free
+    function withdrawSome(uint256 _amountNeeded) internal returns (uint256 _liquidatedAmount, uint256 _loss) {
+        uint256 _preWithdrawWant = balanceOfWant();
         // @note how much LP we need to unstake to match exact want needed
-        uint256 _lpAmount = (_wantNeeded * 1e18) / _valueLpToWant();
+        uint256 _lpAmount = (_amountNeeded * 1e18) / _valueLpToWant();
         uint256 _balanceOfUnstakedLPToken = balanceOfUnstakedLPToken();
 
         // @note if for some reason we have unstaked LP tokens idle in the strategy, account them
@@ -249,13 +240,19 @@ contract Strategy is BaseStrategy {
         _lpAmount = Math.min(_lpAmount, balanceOfStakedLPToken());
         
         uint256 _wantBefore = balanceOfWant();
-        uint256 _balanceOfUnstakedLPToken = balanceOfUnstakedLPToken();
         if (_lpAmount > _balanceOfUnstakedLPToken) {
             _unstake(_lpAmount - _balanceOfUnstakedLPToken); // @note will reset the reward multiplier
         }
         
         _removeLiquidity(_lpAmount);
-        _liquidatedAmount = balanceOfWant() - _wantBefore;
+
+        uint256 _wantFreed = balanceOfWant() - _preWithdrawWant;
+        if (_amountNeeded > _wantFreed) {
+            _liquidatedAmount = _wantFreed;
+            _loss = _amountNeeded - _wantFreed;
+        } else {
+            _liquidatedAmount = _amountNeeded;
+        }
     }
 
     function _removeLiquidity(uint256 _lpAmount) internal {

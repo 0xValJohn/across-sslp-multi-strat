@@ -20,6 +20,7 @@ contract StrategyFixture is ExtendedTest {
     }
 
     IERC20 public weth;
+    IERC20 public usdc;
 
     AssetFixture[] public assetFixtures;
 
@@ -44,6 +45,7 @@ contract StrategyFixture is ExtendedTest {
         _setTokenAddrs();
 
         weth = IERC20(tokenAddrs["WETH"]);
+        usdc= IERC20(tokenAddrs["USDC"]);
 
         // @note want selector for strategy
         string[3] memory _tokensToTest = ["USDC", "DAI", "WETH"];
