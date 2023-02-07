@@ -141,17 +141,15 @@ contract Strategy is BaseStrategy {
         returns (uint256 _liquidatedAmount, uint256 _loss)
     {
 
-        // @note withdraw the amount needed or the maximum available liquidity!
-        _amountNeeded = Math.min(_amountNeeded - balanceOfWant(), availableLiquidity()); 
-        uint256 _liquidAssets = balanceOfWant();
-        if (_liquidAssets < _amountNeeded) {
-            (_liquidatedAmount, _loss) = withdrawSome(_amountNeeded - _liquidAssets);
-            _liquidAssets = balanceOfWant();
+        // @note withdraw the amount needed or the maximum available liquidity! 
+        uint256 _wantBalance = balanceOfWant();
 
-            if (_amountNeeded > _liquidAssets) _loss = _amountNeeded - _liquidAssets;
+        if (_wantBalance < _amountNeeded) {
+            (_liquidatedAmount, _loss) = withdrawSome(_amountNeeded - _wantBalance);
+            _wantBalance = balanceOfWant();
         }
 
-        _liquidatedAmount = Math.min(_amountNeeded, _liquidAssets);
+        _liquidatedAmount = Math.min(_amountNeeded, _wantBalance);
         require(_amountNeeded >= _liquidatedAmount + _loss, "!check");
     }
 
@@ -226,6 +224,7 @@ contract Strategy is BaseStrategy {
     
     // @params _amountNeeded WANT we need to free
     function withdrawSome(uint256 _amountNeeded) internal returns (uint256 _liquidatedAmount, uint256 _loss) {
+        _amountNeeded = Math.min(_amountNeeded, availableLiquidity());
         uint256 _preWithdrawWant = balanceOfWant();
         // @note how much LP we need to unstake to match exact want needed
         uint256 _lpAmount = (_amountNeeded * 1e18) / _valueLpToWant();
@@ -233,17 +232,9 @@ contract Strategy is BaseStrategy {
 
         // @note if for some reason we have unstaked LP tokens idle in the strategy, account them
         if (_lpAmount > _balanceOfUnstakedLPToken) {
-            unchecked { _lpAmount = _lpAmount - _balanceOfUnstakedLPToken; } 
+            _unstake(Math.min((_lpAmount - _balanceOfUnstakedLPToken),balanceOfStakedLPToken())); // @note will reset the reward multiplier
         }
-        
-        // @note unstake the LP needed or the entire staked balance
-        _lpAmount = Math.min(_lpAmount, balanceOfStakedLPToken());
-        
-        uint256 _wantBefore = balanceOfWant();
-        if (_lpAmount > _balanceOfUnstakedLPToken) {
-            _unstake(_lpAmount - _balanceOfUnstakedLPToken); // @note will reset the reward multiplier
-        }
-        
+
         _removeLiquidity(_lpAmount);
 
         uint256 _wantFreed = balanceOfWant() - _preWithdrawWant;
